@@ -2,7 +2,6 @@
 
 namespace Novanova\Odnoklassniki;
 
-
 /**
  * Class Odnoklassniki
  * @package Novanova\Odnoklassniki
@@ -119,7 +118,36 @@ class Odnoklassniki
         }
 
         $sign .= $this->secret;
+
         return md5($sign);
     }
 
+    /**
+     * @param  string      $code
+     * @param  string      $redirect_uri
+     * @return mixed
+     * @throws VKException
+     */
+    public function getAccessToken($code, $redirect_uri)
+    {
+
+        $params = array(
+            'client_id' => $this->app_id,
+            'client_secret' => $this->secret,
+            'code' => $code,
+            'redirect_uri' => $redirect_uri,
+        );
+
+        $response = file_get_contents('https://api.odnoklassniki.ru/oauth/token.do?' . http_build_query($params));
+
+        if (!$response = json_decode($response)) {
+            throw new OdnoklassnikiException('Odnoklassniki API error');
+        }
+
+        if (empty($response->access_token)) {
+            throw new OdnoklassnikiException('Odnoklassniki API error');
+        }
+
+        return $response;
+    }
 }
