@@ -2,6 +2,9 @@
 
 namespace Novanova\Odnoklassniki;
 
+use GuzzleHttp\Client;
+use GuzzleHttp\Exception\RequestException;
+
 /**
  * Class Odnoklassniki
  * @package Novanova\Odnoklassniki
@@ -23,6 +26,11 @@ class Odnoklassniki
     private $secret;
 
     /**
+     * @var Client
+     */
+    private $guzzle;
+
+    /**
      * @param $app_id
      * @param $public_key
      * @param $secret
@@ -32,6 +40,8 @@ class Odnoklassniki
         $this->app_id = $app_id;
         $this->public_key = $public_key;
         $this->secret = $secret;
+
+        $this->guzzle = new Client();
     }
 
     /**
@@ -53,26 +63,21 @@ class Odnoklassniki
     /**
      * @param $method
      * @param $params
+     * @param $access_token
      * @return mixed
      * @throws OdnoklassnikiException
      */
-    public function api($method, $params)
+    public function api($method, array $params = array(), $access_token = null)
     {
         $params['application_key'] = $this->public_key;
         $params['method'] = $method;
         $params['format'] = 'json';
-        $params['sig'] = $this->sign($params);
-
-        $response = file_get_contents('http://api.odnoklassniki.ru/fb.do?' . http_build_query($params));
-        if (!$response = json_decode($response)) {
-            throw new OdnoklassnikiException('Odnoklassniki API error');
+        $params['sig'] = $this->sign($params, $access_token);
+        if ($access_token) {
+            $params['access_token'] = $access_token;
         }
 
-        if (!empty($response->error_code) && !empty($response->error_msg)) {
-            throw new OdnoklassnikiException($response->error_msg, $response->error_code);
-        }
-
-        return $response;
+        return $this->call('http://api.odnoklassniki.ru/fb.do', $params);
     }
 
     /**
@@ -81,32 +86,40 @@ class Odnoklassniki
      * @return mixed
      * @throws OdnoklassnikiException
      */
-    public function promo_api($method, $params)
+    public function promo_api($method, array $params = array())
     {
         $params['appId'] = $this->app_id;
         $params['format'] = 'json';
         $params['sig'] = $this->sign($params);
 
-        $response = file_get_contents(
-            'http://sp.odnoklassniki.ru/projects/common/' . $method . '?' . http_build_query($params)
+        return $this->call('http://sp.odnoklassniki.ru/projects/common/' . $method, $params);
+    }
+
+    /**
+     * @param  string                 $code
+     * @param  string                 $redirect_uri
+     * @return mixed
+     * @throws OdnoklassnikiException
+     */
+    public function getAccessToken($code, $redirect_uri)
+    {
+        $params = array(
+            'client_id' => $this->app_id,
+            'client_secret' => $this->secret,
+            'code' => $code,
+            'redirect_uri' => $redirect_uri,
+            'grant_type' => 'authorization_code',
         );
 
-        if (!$response = json_decode($response)) {
-            throw new OdnoklassnikiException('Odnoklassniki API error');
-        }
-
-        if (!empty($response->error_code) && !empty($response->error_msg)) {
-            throw new OdnoklassnikiException($response->error_msg, $response->error_code);
-        }
-
-        return $response;
+        return $this->call('https://api.odnoklassniki.ru/oauth/token.do', $params);
     }
 
     /**
      * @param $params
+     * @param $access_token
      * @return string
      */
-    public function sign($params)
+    public function sign(array $params, $access_token = null)
     {
         $sign = '';
         ksort($params);
@@ -117,35 +130,35 @@ class Odnoklassniki
             $sign .= $key . '=' . $value;
         }
 
-        $sign .= $this->secret;
+        $sign .= $access_token ? md5($access_token . $this->secret) : $this->secret;
 
         return md5($sign);
     }
 
     /**
-     * @param  string      $code
-     * @param  string      $redirect_uri
+     * @param $params
      * @return mixed
-     * @throws VKException
+     * @throws OdnoklassnikiException
      */
-    public function getAccessToken($code, $redirect_uri)
+    private function call($url, array $params)
     {
-
-        $params = array(
-            'client_id' => $this->app_id,
-            'client_secret' => $this->secret,
-            'code' => $code,
-            'redirect_uri' => $redirect_uri,
-        );
-
-        $response = file_get_contents('https://api.odnoklassniki.ru/oauth/token.do?' . http_build_query($params));
-
-        if (!$response = json_decode($response)) {
-            throw new OdnoklassnikiException('Odnoklassniki API error');
+        try {
+            $response = $this->guzzle->post(
+                $url,
+                array(
+                    'body' => $params
+                )
+            )->getBody();
+        } catch (RequestException $e) {
+            throw new OdnoklassnikiException($e->getMessage());
         }
 
-        if (empty($response->access_token)) {
-            throw new OdnoklassnikiException('Odnoklassniki API error');
+        if (!$response = json_decode($response)) {
+            throw new OdnoklassnikiException('Response parse error');
+        }
+
+        if (!empty($response->error_code) && !empty($response->error_msg)) {
+            throw new OdnoklassnikiException($response->error_msg, $response->error_code);
         }
 
         return $response;
